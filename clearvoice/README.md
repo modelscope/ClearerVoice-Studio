@@ -45,6 +45,8 @@ pip install -r requirements.txt
 ``` sh
 cd clearvoice
 python demo.py
+## web demo
+streamlit run streamlit_app.py
 ```
 
 or 
