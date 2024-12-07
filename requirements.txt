@@ -27,3 +27,5 @@ python_speech_features==0.6
 typeguard==4.3.0
 scenedetect
 torchvision
+gdown==5.2.0
+streamlit==1.40.2
