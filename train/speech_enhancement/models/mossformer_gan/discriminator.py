@@ -20,7 +20,7 @@ def segment_specs(y, seg_length=15, seg_hop=4, max_length=None):
     Segment a spectrogram into "seg_length" wide spectrogram segments.
     Instead of using only the frequency bin of the current time step, 
     the neighboring bins are included as input to the CNN. For example 
-    for a seg_length of 7, the previous 3 and the follwing 3 frequency 
+    for a seg_length of 7, the previous 3 and the following 3 frequency 
     bins are included.
 
     A spectrogram with input size [H x W] will be segmented to:
