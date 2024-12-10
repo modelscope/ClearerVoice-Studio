@@ -71,18 +71,35 @@ class FRCRN_SE_16K(nn.Module):
             win_type=args.win_type
         )
 
-    def forward(self, x):
+    def forward(self, x, real_time=False):
         """
         Forward pass of the model.
 
         Args:
             x (torch.Tensor): Input tensor representing audio signals.
+            real_time (bool): Flag to indicate real-time processing.
 
         Returns:
             torch.Tensor: Processed output tensor after applying the model.
         """
-        output = self.model(x)
-        return output[1][0]  # Return estimated waveform
+        if real_time:
+            return self.real_time_process(x)
+        else:
+            output = self.model(x)
+            return output[1][0]  # Return estimated waveform
+
+    def real_time_process(self, x):
+        """
+        Real-time processing method for the FRCRN model.
+
+        Args:
+            x (torch.Tensor): Input tensor representing audio signals.
+
+        Returns:
+            torch.Tensor: Processed output tensor after applying the model in real-time.
+        """
+        output = self.model.real_time_process(x)
+        return output
 
 
 class DCCRN(nn.Module):
@@ -249,3 +266,41 @@ class DCCRN(nn.Module):
         }]
         return params
 
+    def real_time_process(self, inputs):
+        """
+        Real-time processing method for the DCCRN model.
+
+        Args:
+            inputs (torch.Tensor): Input tensor representing audio signals.
+
+        Returns:
+            torch.Tensor: Processed output tensor after applying the model in real-time.
+        """
+        out_list = []
+        # Compute the complex spectrogram using STFT
+        cmp_spec = self.stft(inputs)  # [B, D*2, T]
+        cmp_spec = torch.unsqueeze(cmp_spec, 1)  # [B, 1, D*2, T]
+        
+        # Split into real and imaginary parts
+        cmp_spec = torch.cat([
+            cmp_spec[:, :, :self.feat_dim, :],  # Real part
+            cmp_spec[:, :, self.feat_dim:, :],  # Imaginary part
+        ], 1)  # [B, 2, D, T]
+
+        cmp_spec = torch.unsqueeze(cmp_spec, 4)  # [B, 2, D, T, 1]
+        cmp_spec = torch.transpose(cmp_spec, 1, 4)  # [B, 1, D, T, 2]
+        
+        # Pass through the UNet to estimate masks
+        unet1_out = self.unet(cmp_spec)  # First UNet output
+        cmp_mask1 = torch.tanh(unet1_out)  # First mask
+
+        unet2_out = self.unet2(unet1_out)  # Second UNet output
+        cmp_mask2 = torch.tanh(unet2_out)  # Second mask
+        cmp_mask2 = cmp_mask2 + cmp_mask1  # Combine masks
+
+        # Apply the estimated mask to the complex spectrogram
+        est_spec, est_wav, est_mask = self.apply_mask(cmp_spec, cmp_mask2)
+        out_list.append(est_spec)
+        out_list.append(est_wav)
+        out_list.append(est_mask)
+        return out_list
