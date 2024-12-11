@@ -15,6 +15,6 @@ decode_window: 1 #one-pass decoding length
 #
 # FFT parameters
 win_type: 'hanning'
-win_len: 640
-win_inc: 320
+win_len: 320
+win_inc: 160
 fft_len: 640
