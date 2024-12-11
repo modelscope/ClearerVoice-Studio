@@ -11,6 +11,41 @@ import numpy as np
 import os 
 import sys
 import librosa
+import struct
+
+def is_audio_file(file_path):
+    """
+    通过检查文件头部的魔数来判断文件是否为音频文件
+    
+    支持的格式:
+    - WAV (RIFF header)
+    - FLAC (fLaC header)
+    - MP3 (ID3 or MPEG sync)
+    - M4A/AAC (ftyp header)
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            header = f.read(12)  # 读取前12个字节
+            
+            # WAV: RIFF xxxxWAVE
+            if header.startswith(b'RIFF') and b'WAVE' in header:
+                return True
+                
+            # FLAC: fLaC
+            if header.startswith(b'fLaC'):
+                return True
+                
+            # MP3: ID3 或 MPEG sync
+            if header.startswith(b'ID3') or (header[0:2] == b'\xFF\xFB' or header[0:2] == b'\xFF\xF3'):
+                return True
+                
+            # M4A/AAC: ftyp
+            if b'ftyp' in header:
+                return True
+                
+        return False
+    except (IOError, OSError):
+        return False
 
 def read_and_config_file(args, input_path, decode=0):
     """
@@ -60,7 +95,7 @@ def read_and_config_file(args, input_path, decode=0):
                 processed_list = librosa.util.find_files(input_path, ext="flac")
         else:
             # If it's a single file and it's a .wav or .flac, add to processed list
-            if input_path.lower().endswith(".wav") or input_path.lower().endswith(".flac"):
+            if is_audio_file(input_path):
                 processed_list.append(input_path)
             else:
                 # Read file paths from the input text file (one path per line)
