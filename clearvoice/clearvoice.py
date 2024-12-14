@@ -35,16 +35,19 @@ class ClearVoice:
             model = self.network_wrapper(task, model_name)
             self.models += [model]  
             
-    def __call__(self, input_path, online_write=False, output_path=None):
+    def __call__(self, input_path, online_write=False, output_path=None, extract_noise=False):
         results = {}
         for model in self.models:
-            result = model.process(input_path, online_write, output_path)
+            result = model.process(input_path, online_write, output_path, extract_noise)
             if not online_write:
-                results[model.name] = result
+                if extract_noise:
+                    results[model.name] = result  # result 现在是 (enhanced, noise) 元组
+                else:
+                    results[model.name] = result
 
         if not online_write:
             if len(results) == 1:
-                return results[model.name]
+                return next(iter(results.values()))
             else:
                 return results
 

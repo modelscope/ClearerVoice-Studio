@@ -17,35 +17,29 @@ from utils.misc import power_compress, power_uncompress, stft, istft, compute_fb
 # Constant for normalizing audio values
 MAX_WAV_VALUE = 32768.0
 
-def decode_one_audio(model, device, inputs, args):
-    """Decodes audio using the specified model based on the provided network type.
-
-    This function selects the appropriate decoding function based on the specified
-    network in the arguments and processes the input audio data accordingly.
-
+def decode_one_audio(model, device, inputs, args, extract_noise=False):
+    """Select and call the appropriate decoding function based on network type.
+    
     Args:
-        model (nn.Module): The trained model used for decoding.
-        device (torch.device): The device (CPU or GPU) to perform computations on.
-        inputs (torch.Tensor): Input audio tensor.
-        args (Namespace): Contains arguments for network configuration.
-
-    Returns:
-        list: A list of decoded audio outputs for each speaker.
+        model: The model to use for decoding
+        device: The device to run inference on
+        inputs: Input audio data
+        args: Arguments containing model configuration
+        extract_noise: Whether to extract noise signal
     """
-    # Select decoding function based on the network type specified in args
     if args.network == 'FRCRN_SE_16K':
-        return decode_one_audio_frcrn_se_16k(model, device, inputs, args)
+        return decode_one_audio_frcrn_se_16k(model, device, inputs, args, extract_noise)
     elif args.network == 'MossFormer2_SE_48K':
-        return decode_one_audio_mossformer2_se_48k(model, device, inputs, args)
+        return decode_one_audio_mossformer2_se_48k(model, device, inputs, args, extract_noise)
     elif args.network == 'MossFormerGAN_SE_16K':
-        return decode_one_audio_mossformergan_se_16k(model, device, inputs, args)
+        return decode_one_audio_mossformergan_se_16k(model, device, inputs, args, extract_noise)
     elif args.network == 'MossFormer2_SS_16K':
-        return decode_one_audio_mossformer2_ss_16k(model, device, inputs, args)
+        return decode_one_audio_mossformer2_ss_16k(model, device, inputs, args, extract_noise)
     else:
-        print("No network found!")  # Print error message if no valid network is specified
-        return 
+        print("No network found!")
+        return
 
-def decode_one_audio_mossformer2_ss_16k(model, device, inputs, args):
+def decode_one_audio_mossformer2_ss_16k(model, device, inputs, args, extract_noise=False):
     """Decodes audio using the MossFormer2 model for speech separation at 16kHz.
 
     This function handles the audio decoding process by processing the input tensor
@@ -57,6 +51,7 @@ def decode_one_audio_mossformer2_ss_16k(model, device, inputs, args):
         inputs (torch.Tensor): Input audio tensor of shape (B, T), where B is the batch size
                               and T is the number of time steps.
         args (Namespace): Contains arguments for decoding configuration.
+        extract_noise (bool): Whether to extract noise signal
 
     Returns:
         list: A list of decoded audio outputs for each speaker.
@@ -119,135 +114,149 @@ def decode_one_audio_mossformer2_ss_16k(model, device, inputs, args):
         out[spk] = out[spk] / rms_out * rms_input
     return out  # Return the list of normalized outputs
 
-def decode_one_audio_frcrn_se_16k(model, device, inputs, args):
+def decode_one_audio_frcrn_se_16k(model, device, inputs, args, extract_noise=False):
     """Decodes audio using the FRCRN model for speech enhancement at 16kHz.
 
-    This function processes the input audio tensor either in segments or as a whole, 
-    depending on the length of the input. The model's inference method is applied 
-    to obtain the enhanced audio output.
-
     Args:
-        model (nn.Module): The trained FRCRN model used for decoding.
-        device (torch.device): The device (CPU or GPU) to perform computations on.
-        inputs (torch.Tensor): Input audio tensor of shape (B, T), where B is the batch size
-                              and T is the number of time steps.
-        args (Namespace): Contains arguments for decoding configuration.
+        model: The trained FRCRN model used for decoding
+        device: The device to perform computations on
+        inputs: Input audio tensor of shape (B, T)
+        args: Arguments containing model configuration
+        extract_noise: Whether to extract noise signal
 
     Returns:
-        numpy.ndarray: The decoded audio output, which has been enhanced by the model.
+        If extract_noise is True:
+            tuple: (enhanced_audio, noise_audio)
+        else:
+            ndarray: enhanced_audio
     """
-    decode_do_segment = False  # Flag to determine if segmentation is needed
+    decode_do_segment = False
+    window = args.sampling_rate * args.decode_window
+    stride = int(window * 0.75)
+    b, t = inputs.shape
 
-    window = args.sampling_rate * args.decode_window  # Decoding window length
-    stride = int(window * 0.75)  # Decoding stride for segmenting the input
-    b, t = inputs.shape  # Get batch size (b) and input length (t)
-
-    # Check if input length exceeds one-time decode length to decide on segmentation
+    # 检查是否需要分段处理
     if t > args.sampling_rate * args.one_time_decode_length:
-        decode_do_segment = True  # Enable segment decoding for long sequences
+        decode_do_segment = True
 
-    # Pad the inputs to meet the decoding window length requirements
-    if t < window:
-        # Pad with zeros if the input length is less than the window size
-        inputs = np.concatenate([inputs, np.zeros((inputs.shape[0], window - t))], axis=1)
-    elif t < window + stride:
-        # Pad the input if its length is less than the window plus stride
-        padding = window + stride - t
-        inputs = np.concatenate([inputs, np.zeros((inputs.shape[0], padding))], axis=1)
-    else:
-        # Ensure the input length is a multiple of the stride
-        if (t - window) % stride != 0:
-            padding = t - (t - window) // stride * stride
-            inputs = np.concatenate([inputs, np.zeros((inputs.shape[0], padding))], axis=1)
+    # 转换输入为PyTorch张量并保存原始输入
+    original_inputs = torch.from_numpy(np.float32(inputs)).to(device)
+    inputs = original_inputs.clone()
 
-    # Convert inputs to a PyTorch tensor and move to the specified device
-    inputs = torch.from_numpy(np.float32(inputs)).to(device)
-    b, t = inputs.shape  # Update batch size and input length after conversion
-
-    # Process the inputs in segments if necessary
     if decode_do_segment:
-        outputs = np.zeros(t)  # Initialize the output array
-        give_up_length = (window - stride) // 2  # Calculate length to give up at each segment
-        current_idx = 0  # Initialize current index for segmentation
+        outputs = np.zeros(t)
+        if extract_noise:
+            noise_outputs = np.zeros(t)
+        give_up_length = (window - stride) // 2
+        current_idx = 0
 
         while current_idx + window <= t:
-            tmp_input = inputs[:, current_idx:current_idx + window]  # Get segment input
-            tmp_output = model.inference(tmp_input).detach().cpu().numpy()  # Inference on segment
+            tmp_input = inputs[:, current_idx:current_idx + window]
+            # 获取增强后的语音
+            tmp_output = model.inference(tmp_input).detach().cpu().numpy()
 
-            # For the first segment, use the whole segment minus the give-up length
             if current_idx == 0:
                 outputs[current_idx:current_idx + window - give_up_length] = tmp_output[:-give_up_length]
             else:
-                # For subsequent segments, account for the give-up length
-                outputs[current_idx + give_up_length:current_idx + window - give_up_length] = tmp_output[give_up_length:-give_up_length]
+                outputs[current_idx + give_up_length:current_idx + window - give_up_length] = \
+                    tmp_output[give_up_length:-give_up_length]
 
-            current_idx += stride  # Move to the next segment
+            current_idx += stride
+
+        if extract_noise:
+            # 计算噪音信号
+            original = original_inputs.cpu().numpy()[0, :t]
+            noise_outputs = original - outputs
+            return outputs, noise_outputs
+        return outputs
     else:
-        # If no segmentation is required, process the entire input
-        outputs = model.inference(inputs).detach().cpu().numpy()  # Inference on full input
+        # 处理完整音频
+        enhanced = model.inference(inputs).detach().cpu().numpy()
+        
+        if extract_noise:
+            # 计算噪音信号
+            original = original_inputs.cpu().numpy()[0, :t]
+            noise = original - enhanced
+            return enhanced, noise
+        return enhanced
 
-    return outputs  # Return the decoded audio output
-
-def decode_one_audio_mossformergan_se_16k(model, device, inputs, args):
+def decode_one_audio_mossformergan_se_16k(model, device, inputs, args, extract_noise=False):
     """Decodes audio using the MossFormerGAN model for speech enhancement at 16kHz.
 
-    This function processes the input audio tensor either in segments or as a whole, 
-    depending on the length of the input. The `_decode_one_audio_mossformergan_se_16k` 
+    This function processes the input audio tensor either in segments or as a whole,
+    depending on the length of the input. The `_decode_one_audio_mossformergan_se_16k`
     function is called to perform the model inference and return the enhanced audio output.
 
     Args:
         model (nn.Module): The trained MossFormerGAN model used for decoding.
         device (torch.device): The device (CPU or GPU) for computation.
-        inputs (torch.Tensor): Input audio tensor of shape (B, T), where B is the batch size 
-                              and T is the number of time steps.
+        inputs (torch.Tensor): Input audio tensor of shape (B, T).
         args (Namespace): Contains arguments for decoding configuration.
+        extract_noise (bool): Whether to extract noise signal (default: False)
 
     Returns:
-        numpy.ndarray: The decoded audio output, which has been enhanced by the model.
+        If extract_noise is True:
+            tuple: (enhanced_audio, noise_audio)
+        else:
+            ndarray: enhanced_audio
     """
-    decode_do_segment = False  # Flag to determine if segmentation is needed
-    window = args.sampling_rate * args.decode_window  # Decoding window length
-    stride = int(window * 0.75)  # Decoding stride for segmenting the input
-    b, t = inputs.shape  # Get batch size (b) and input length (t)
+    decode_do_segment = False
+    window = args.sampling_rate * args.decode_window
+    stride = int(window * 0.75)
+    b, t = inputs.shape
 
     # Check if input length exceeds one-time decode length to decide on segmentation
     if t > args.sampling_rate * args.one_time_decode_length:
-        decode_do_segment = True  # Enable segment decoding for long sequences
+        decode_do_segment = True
 
-    # Convert inputs to a PyTorch tensor and move to the specified device
+    # Convert inputs to PyTorch tensor and compute normalization factor
     inputs = torch.from_numpy(np.float32(inputs)).to(device)
-
-    # Compute normalization factor based on the input
     norm_factor = torch.sqrt(inputs.size(-1) / torch.sum((inputs ** 2.0), dim=-1))
+    b, t = inputs.shape
 
-    b, t = inputs.shape  # Update batch size and input length after conversion
-
-    # Process the inputs in segments if necessary
     if decode_do_segment:
-        outputs = np.zeros(t)  # Initialize the output array
-        give_up_length = (window - stride) // 2  # Calculate length to give up at each segment
-        current_idx = 0  # Initialize current index for segmentation
+        outputs = np.zeros(t)
+        if extract_noise:
+            noise_outputs = np.zeros(t)
+        give_up_length = (window - stride) // 2
+        current_idx = 0
 
         while current_idx + window <= t:
-            tmp_input = inputs[:, current_idx:current_idx + window]  # Get segment input
-            tmp_output = _decode_one_audio_mossformergan_se_16k(model, device, tmp_input, norm_factor, args)  # Inference on segment
+            tmp_input = inputs[:, current_idx:current_idx + window]
+            if extract_noise:
+                tmp_output, tmp_noise = _decode_one_audio_mossformergan_se_16k(
+                    model, device, tmp_input, norm_factor, args, extract_noise)
+            else:
+                tmp_output = _decode_one_audio_mossformergan_se_16k(
+                    model, device, tmp_input, norm_factor, args, extract_noise)
 
-            # For the first segment, use the whole segment minus the give-up length
             if current_idx == 0:
                 outputs[current_idx:current_idx + window - give_up_length] = tmp_output[:-give_up_length]
+                if extract_noise:
+                    noise_outputs[current_idx:current_idx + window - give_up_length] = tmp_noise[:-give_up_length]
             else:
-                # For subsequent segments, account for the give-up length
-                outputs[current_idx + give_up_length:current_idx + window - give_up_length] = tmp_output[give_up_length:-give_up_length]
+                outputs[current_idx + give_up_length:current_idx + window - give_up_length] = \
+                    tmp_output[give_up_length:-give_up_length]
+                if extract_noise:
+                    noise_outputs[current_idx + give_up_length:current_idx + window - give_up_length] = \
+                        tmp_noise[give_up_length:-give_up_length]
 
-            current_idx += stride  # Move to the next segment
+            current_idx += stride
 
-        return outputs  # Return the accumulated outputs from segments
+        if extract_noise:
+            return outputs, noise_outputs
+        return outputs
     else:
-        # If no segmentation is required, process the entire input
-        return _decode_one_audio_mossformergan_se_16k(model, device, inputs, norm_factor, args)  # Inference on full input
+        if extract_noise:
+            enhanced, noise = _decode_one_audio_mossformergan_se_16k(
+                model, device, inputs, norm_factor, args, extract_noise)
+            return enhanced, noise
+        else:
+            return _decode_one_audio_mossformergan_se_16k(
+                model, device, inputs, norm_factor, args, extract_noise)
 
 @torch.no_grad()
-def _decode_one_audio_mossformergan_se_16k(model, device, inputs, norm_factor, args):
+def _decode_one_audio_mossformergan_se_16k(model, device, inputs, norm_factor, args, extract_noise=False):
     """Processes audio inputs through the MossFormerGAN model for speech enhancement.
 
     This function performs the following steps:
@@ -261,48 +270,58 @@ def _decode_one_audio_mossformergan_se_16k(model, device, inputs, norm_factor, a
     Args:
         model (nn.Module): The trained MossFormerGAN model used for decoding.
         device (torch.device): The device (CPU or GPU) for computation.
-        inputs (torch.Tensor): Input audio tensor of shape (B, T), where B is the batch size and T is the number of time steps.
-        norm_factor (torch.Tensor): A norm tensor to regularize input amplitude
+        inputs (torch.Tensor): Input audio tensor of shape (B, T).
+        norm_factor (torch.Tensor): A norm tensor to regularize input amplitude.
         args (Namespace): Contains arguments for STFT parameters and normalization.
+        extract_noise (bool): Whether to extract noise signal (default: False)
 
     Returns:
-        numpy.ndarray: The decoded audio output, which has been enhanced by the model.
+        If extract_noise is True:
+            tuple: (enhanced_audio, noise_audio)
+        else:
+            ndarray: enhanced_audio
     """
-    input_len = inputs.size(-1)  # Get the length of the input audio
-    nframe = int(np.ceil(input_len / args.win_inc))  # Calculate the number of frames based on window increment
-    padded_len = nframe * args.win_inc  # Calculate the padded length to fit the model
-    padding_len = padded_len - input_len  # Determine how much padding is needed
+    input_len = inputs.size(-1)
+    nframe = int(np.ceil(input_len / args.win_inc))
+    padded_len = nframe * args.win_inc
+    padding_len = padded_len - input_len
 
-    # Pad the input audio with the beginning of the input
+    # Save original input for noise calculation if needed
+    original_inputs = inputs.clone()
+
+    # Pad inputs
     inputs = torch.cat([inputs, inputs[:, :padding_len]], dim=-1)
+    inputs = torch.transpose(inputs, 0, 1)
+    inputs = torch.transpose(inputs * norm_factor, 0, 1)
 
-    # Prepare inputs for STFT by transposing and normalizing
-    inputs = torch.transpose(inputs, 0, 1)  # Change shape for STFT
-    inputs = torch.transpose(inputs * norm_factor, 0, 1)  # Apply normalization factor and transpose back
-
-    # Perform Short-Time Fourier Transform (STFT) on the normalized inputs
+    # Compute STFT
     inputs_spec = stft(inputs, args, center=True, periodic=True, onesided=True)
-    inputs_spec = inputs_spec.to(torch.float32)  # Ensure the spectrogram is in float32 format
+    inputs_spec = inputs_spec.to(torch.float32)
 
-    # Compress the power of the spectrogram to improve model performance
+    # Compress power spectrum
     inputs_spec = power_compress(inputs_spec).permute(0, 1, 3, 2)
 
-    # Pass the compressed spectrogram through the model to get predicted real and imaginary parts
+    # Get model predictions
     out_list = model(inputs_spec)
     pred_real, pred_imag = out_list[0].permute(0, 1, 3, 2), out_list[1].permute(0, 1, 3, 2)
 
-    # Uncompress the predicted spectrogram to get the magnitude and phase
+    # Uncompress predicted spectrum
     pred_spec_uncompress = power_uncompress(pred_real, pred_imag).squeeze(1)
 
-    # Perform Inverse STFT (iSTFT) to convert back to time domain audio
+    # Reconstruct enhanced audio
     outputs = istft(pred_spec_uncompress, args, center=True, periodic=True, onesided=True)
-
-    # Normalize the output audio by dividing by the normalization factor
     outputs = outputs.squeeze(0) / norm_factor
+    enhanced = outputs[:input_len]
 
-    return outputs[:input_len].detach().cpu().numpy()  # Return the output as a numpy array
+    if extract_noise:
+        # Calculate noise signal
+        original = original_inputs.squeeze(0)[:input_len]
+        noise = original - enhanced
+        return enhanced.detach().cpu().numpy(), noise.detach().cpu().numpy()
 
-def decode_one_audio_mossformer2_se_48k(model, device, inputs, args):
+    return enhanced.detach().cpu().numpy()
+
+def decode_one_audio_mossformer2_se_48k(model, device, inputs, args, extract_noise=False):
     """Processes audio inputs through the MossFormer2 model for speech enhancement at 48kHz.
 
     This function decodes audio input using the following steps:
@@ -313,27 +332,30 @@ def decode_one_audio_mossformer2_se_48k(model, device, inputs, args):
     5. Passes the filter banks through the model to get a predicted mask.
     6. Applies the mask to the spectrogram of the audio segment and reconstructs the audio.
     7. For shorter inputs, processes them in one go without segmentation.
-    
+
     Args:
         model (nn.Module): The trained MossFormer2 model used for decoding.
         device (torch.device): The device (CPU or GPU) for computation.
-        inputs (torch.Tensor): Input audio tensor of shape (B, T), where B is the batch size and T is the number of time steps.
+        inputs (torch.Tensor): Input audio tensor of shape (B, T).
         args (Namespace): Contains arguments for sampling rate, window size, and other parameters.
+        extract_noise (bool): Whether to extract noise signal (default: False)
 
     Returns:
-        numpy.ndarray: The decoded audio output, normalized to the range [-1, 1].
+        If extract_noise is True:
+            tuple: (enhanced_audio, noise_audio)
+        else:
+            ndarray: enhanced_audio normalized to [-1, 1]
     """
-    inputs = inputs[0, :]  # Extract the first element from the input tensor
-    input_len = inputs.shape[0]  # Get the length of the input audio
-    inputs = inputs * MAX_WAV_VALUE  # Normalize the input to the maximum WAV value
+    inputs = inputs[0, :]
+    input_len = inputs.shape[0]
+    inputs = inputs * MAX_WAV_VALUE
 
-    # Check if input length exceeds the defined threshold for online decoding
     if input_len > args.sampling_rate * args.one_time_decode_length:  # 20 seconds
         online_decoding = True
         if online_decoding:
-            window = int(args.sampling_rate * args.decode_window)  # Define window length (e.g., 4s for 48kHz)
-            stride = int(window * 0.75)  # Define stride length (e.g., 3s for 48kHz)
-            t = inputs.shape[0]  # Update length after potential padding
+            window = int(args.sampling_rate * args.decode_window)  # Define window length
+            stride = int(window * 0.75)  # Define stride length
+            t = inputs.shape[0]
 
             # Pad input if necessary to match window size
             if t < window:
@@ -346,14 +368,16 @@ def decode_one_audio_mossformer2_se_48k(model, device, inputs, args):
                     padding = t - (t - window) // stride * stride
                     inputs = np.concatenate([inputs, np.zeros(padding)], 0)
 
-            audio = torch.from_numpy(inputs).type(torch.FloatTensor)  # Convert to Torch tensor
-            t = audio.shape[0]  # Update length after conversion
-            outputs = torch.from_numpy(np.zeros(t))  # Initialize output tensor
-            give_up_length = (window - stride) // 2  # Determine length to ignore at the edges
-            dfsmn_memory_length = 0  # Placeholder for potential memory length
-            current_idx = 0  # Initialize current index for sliding window
+            audio = torch.from_numpy(inputs).type(torch.FloatTensor)
+            t = audio.shape[0]
+            outputs = torch.from_numpy(np.zeros(t))
+            if extract_noise:
+                noise_outputs = torch.from_numpy(np.zeros(t))
+            
+            give_up_length = (window - stride) // 2
+            dfsmn_memory_length = 0
+            current_idx = 0
 
-            # Process audio in sliding window segments
             while current_idx + window <= t:
                 # Select appropriate segment of audio for processing
                 if current_idx < dfsmn_memory_length:
@@ -361,72 +385,91 @@ def decode_one_audio_mossformer2_se_48k(model, device, inputs, args):
                 else:
                     audio_segment = audio[current_idx - dfsmn_memory_length:current_idx + window]
 
-                # Compute filter banks for the audio segment
+                # Compute filter banks and their deltas
                 fbanks = compute_fbank(audio_segment.unsqueeze(0), args)
-                
-                # Compute deltas for filter banks
-                fbank_tr = torch.transpose(fbanks, 0, 1)  # Transpose for delta computation
-                fbank_delta = torchaudio.functional.compute_deltas(fbank_tr)  # First-order delta
-                fbank_delta_delta = torchaudio.functional.compute_deltas(fbank_delta)  # Second-order delta
-                
-                # Transpose back to original shape
+                fbank_tr = torch.transpose(fbanks, 0, 1)
+                fbank_delta = torchaudio.functional.compute_deltas(fbank_tr)
+                fbank_delta_delta = torchaudio.functional.compute_deltas(fbank_delta)
                 fbank_delta = torch.transpose(fbank_delta, 0, 1)
                 fbank_delta_delta = torch.transpose(fbank_delta_delta, 0, 1)
-
-                # Concatenate the original filter banks with their deltas
+                
                 fbanks = torch.cat([fbanks, fbank_delta, fbank_delta_delta], dim=1)
-                fbanks = fbanks.unsqueeze(0).to(device)  # Add batch dimension and move to device
+                fbanks = fbanks.unsqueeze(0).to(device)
 
-                # Pass filter banks through the model
+                # Model inference
                 Out_List = model(fbanks)
-                pred_mask = Out_List[-1]  # Get the predicted mask from the output
-
-                # Apply STFT to the audio segment
+                pred_mask = Out_List[-1]
                 spectrum = stft(audio_segment, args)
-                pred_mask = pred_mask.permute(2, 1, 0)  # Permute dimensions for masking
-                masked_spec = spectrum.cpu() * pred_mask.detach().cpu()  # Apply mask to the spectrum
-                masked_spec_complex = masked_spec[:, :, 0] + 1j * masked_spec[:, :, 1]  # Convert to complex form
+                pred_mask = pred_mask.permute(2, 1, 0)
 
-                # Reconstruct audio from the masked spectrogram
+                # Process enhanced audio
+                masked_spec = spectrum.cpu() * pred_mask.detach().cpu()
+                masked_spec_complex = masked_spec[:, :, 0] + 1j * masked_spec[:, :, 1]
                 output_segment = istft(masked_spec_complex, args, len(audio_segment))
 
-                # Store the output segment in the output tensor
+                # Process noise if requested
+                if extract_noise:
+                    noise_mask = 1 - pred_mask.detach().cpu()
+                    noise_spec = spectrum.cpu() * noise_mask
+                    noise_spec_complex = noise_spec[:, :, 0] + 1j * noise_spec[:, :, 1]
+                    noise_segment = istft(noise_spec_complex, args, len(audio_segment))
+
+                # Store results
                 if current_idx == 0:
                     outputs[current_idx:current_idx + window - give_up_length] = output_segment[:-give_up_length]
+                    if extract_noise:
+                        noise_outputs[current_idx:current_idx + window - give_up_length] = noise_segment[:-give_up_length]
                 else:
-                    output_segment = output_segment[-window:]  # Get the latest window of output
-                    outputs[current_idx + give_up_length:current_idx + window - give_up_length] = output_segment[give_up_length:-give_up_length]
-                
-                current_idx += stride  # Move to the next segment
+                    output_segment = output_segment[-window:]
+                    outputs[current_idx + give_up_length:current_idx + window - give_up_length] = \
+                        output_segment[give_up_length:-give_up_length]
+                    if extract_noise:
+                        noise_segment = noise_segment[-window:]
+                        noise_outputs[current_idx + give_up_length:current_idx + window - give_up_length] = \
+                            noise_segment[give_up_length:-give_up_length]
+
+                current_idx += stride
+
+            if extract_noise:
+                return outputs.numpy() / MAX_WAV_VALUE, noise_outputs.numpy() / MAX_WAV_VALUE
+            return outputs.numpy() / MAX_WAV_VALUE
 
     else:
-        # Process the entire audio at once if it is shorter than the threshold
+        # Process shorter audio in one go
         audio = torch.from_numpy(inputs).type(torch.FloatTensor)
+        
+        # Compute filter banks and their deltas
         fbanks = compute_fbank(audio.unsqueeze(0), args)
-
-        # Compute deltas for filter banks
         fbank_tr = torch.transpose(fbanks, 0, 1)
         fbank_delta = torchaudio.functional.compute_deltas(fbank_tr)
         fbank_delta_delta = torchaudio.functional.compute_deltas(fbank_delta)
         fbank_delta = torch.transpose(fbank_delta, 0, 1)
         fbank_delta_delta = torch.transpose(fbank_delta_delta, 0, 1)
-
-        # Concatenate the original filter banks with their deltas
-        fbanks = torch.cat([fbanks, fbank_delta, fbank_delta_delta], dim=1)
-        fbanks = fbanks.unsqueeze(0).to(device)  # Add batch dimension and move to device
-
-        # Pass filter banks through the model
-        Out_List = model(fbanks)
-        pred_mask = Out_List[-1]  # Get the predicted mask
-        spectrum = stft(audio, args)  # Apply STFT to the audio
-        pred_mask = pred_mask.permute(2, 1, 0)  # Permute dimensions for masking
-        masked_spec = spectrum * pred_mask.detach().cpu()  # Apply mask to the spectrum
-        masked_spec_complex = masked_spec[:, :, 0] + 1j * masked_spec[:, :, 1]  # Convert to complex form
         
-        # Reconstruct audio from the masked spectrogram
-        outputs = istft(masked_spec_complex, args, len(audio))
+        fbanks = torch.cat([fbanks, fbank_delta, fbank_delta_delta], dim=1)
+        fbanks = fbanks.unsqueeze(0).to(device)
 
-    return outputs.numpy() / MAX_WAV_VALUE  # Return the output normalized to [-1, 1]
+        # Model inference
+        Out_List = model(fbanks)
+        pred_mask = Out_List[-1]
+        spectrum = stft(audio, args)
+        pred_mask = pred_mask.permute(2, 1, 0)
+
+        # Process enhanced audio
+        masked_spec = spectrum * pred_mask.detach().cpu()
+        masked_spec_complex = masked_spec[:, :, 0] + 1j * masked_spec[:, :, 1]
+        enhanced = istft(masked_spec_complex, args, len(audio))
+
+        if extract_noise:
+            # Calculate noise signal
+            noise_mask = 1 - pred_mask.detach().cpu()
+            noise_spec = spectrum * noise_mask
+            noise_spec_complex = noise_spec[:, :, 0] + 1j * noise_spec[:, :, 1]
+            noise = istft(noise_spec_complex, args, len(audio))
+            
+            return enhanced.numpy() / MAX_WAV_VALUE, noise.numpy() / MAX_WAV_VALUE
+
+        return enhanced.numpy() / MAX_WAV_VALUE
 
 def decode_one_audio_AV_MossFormer2_TSE_16K(model, inputs, args):
     """Processes video inputs through the AV mossformer2 model with Target speaker extraction (TSE) for decoding at 16kHz.
