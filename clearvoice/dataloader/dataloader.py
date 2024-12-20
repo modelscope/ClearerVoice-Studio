@@ -38,7 +38,7 @@ def audioread(path, sampling_rate):
     # Normalize the audio data.
     data, scalar = audio_norm(data)
     
-    # Convert to mono by selecting the first channel if the audio has multiple channels.
+    # Convert to mono by using librosa.to_mono if the audio has multiple channels.
     if len(data.shape) > 1:
         data = librosa.to_mono(data.T)
     
