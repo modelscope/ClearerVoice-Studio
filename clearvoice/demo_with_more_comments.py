@@ -57,3 +57,31 @@ if __name__ == '__main__':
         # - online_write (bool): Set to True to enable saving the enhanced output during processing
         # - output_path (str): Path to the directory to save the enhanced output files
         myClearVoice(input_path='samples/scp/audio_samples.scp', online_write=True, output_path='samples/path_to_output_wavs_scp')
+
+    ## ---------------- Demo Three: Real-Time Processing -----------------------
+    if False:  # This block demonstrates how to use the FRCRN_SE_16K model for real-time speech enhancement
+        # Initialize ClearVoice for the task of speech enhancement using the FRCRN_SE_16K model
+        myClearVoice = ClearVoice(task='speech_enhancement', model_names=['FRCRN_SE_16K'])
+
+        # 1st calling method: 
+        #   Process an input waveform in real-time and return the enhanced output waveform
+        # - input_path (str): Path to the input noisy audio file (input_realtime.wav)
+        # - output_wav (dict or ndarray) : The enhanced output waveform
+        output_wav = myClearVoice(input_path='samples/input_realtime.wav', online_write=False)
+        # Write the processed waveform to an output file
+        # - output_path (str): Path to save the enhanced audio file (output_FRCRN_SE_16K_realtime.wav)
+        myClearVoice.write(output_wav, output_path='samples/output_FRCRN_SE_16K_realtime.wav')
+
+        # 2nd calling method: 
+        #   Process and write audio files directly in real-time
+        # - input_path (str): Path to the directory of input noisy audio files
+        # - online_write (bool): Set to True to enable saving the enhanced audio directly to files during processing
+        # - output_path (str): Path to the directory to save the enhanced output files
+        myClearVoice(input_path='samples/path_to_input_wavs_realtime', online_write=True, output_path='samples/path_to_output_wavs_realtime')
+
+        # 3rd calling method: 
+        #   Use an .scp file to specify input audio paths for real-time processing
+        # - input_path (str): Path to a .scp file listing multiple audio file paths
+        # - online_write (bool): Set to True to enable saving the enhanced audio directly to files during processing
+        # - output_path (str): Path to the directory to save the enhanced output files
+        myClearVoice(input_path='samples/scp/audio_samples_realtime.scp', online_write=True, output_path='samples/path_to_output_wavs_realtime_scp')
