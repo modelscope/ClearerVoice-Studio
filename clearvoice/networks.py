@@ -150,133 +150,160 @@ class SpeechModel:
         self.model.load_state_dict(state)
         #print(f'Successfully loaded {model_name} for decoding')
 
-    def decode(self):
-        """
-        Decodes the input audio data using the loaded model and ensures the output matches the original audio length.
-
+    def decode(self, extract_noise=False):
+        """Decode the audio data using the model.
+        
         This method processes the audio through a speech model (e.g., for enhancement, separation, etc.),
         and truncates the resulting audio to match the original input's length. The method supports multiple speakers 
         if the model handles multi-speaker audio.
 
-        Returns:
-        output_audio: The decoded audio after processing, truncated to the input audio length. 
-                  If multi-speaker audio is processed, a list of truncated audio outputs per speaker is returned.
-        """
-        # Decode the audio using the loaded model on the given device (e.g., CPU or GPU)
-        output_audio = decode_one_audio(self.model, self.device, self.data['audio'], self.args)
-
-        # Ensure the decoded output matches the length of the input audio
-        if isinstance(output_audio, list):
-            # If multi-speaker audio (a list of outputs), truncate each speaker's audio to input length
-            for spk in range(self.args.num_spks):
-                output_audio[spk] = output_audio[spk][:self.data['audio_len']]
-        else:
-            # Single output, truncate to input audio length
-            output_audio = output_audio[:self.data['audio_len']]
-    
-        return output_audio
-
-    def process(self, input_path, online_write=False, output_path=None):
-        """
-        Load and process audio files from the specified input path. Optionally, 
-        write the output audio files to the specified output directory.
-        
         Args:
-            input_path (str): Path to the input audio files or folder.
-            online_write (bool): Whether to write the processed audio to disk in real-time.
-            output_path (str): Optional path for writing output files. If None, output 
-                               will be stored in self.result.
-        
+            extract_noise (bool): Whether to extract noise signal.
+
         Returns:
-            dict or ndarray: Processed audio results either as a dictionary or as a single array, 
-                             depending on the number of audio files processed. 
-                             Returns None if online_write is enabled.
+            If extract_noise is True:
+                tuple: (enhanced_audio, noise_audio), both truncated to input audio length
+            else:
+                output_audio: The decoded audio after processing, truncated to the input audio length.
+                           If multi-speaker audio is processed, a list of truncated audio outputs per speaker is returned.
         """
-        
+        # Decode the audio using the loaded model
+        output = decode_one_audio(self.model, self.device, self.data['audio'], self.args, extract_noise)
+
+        if extract_noise:
+            enhanced_audio, noise_audio = output
+            # Ensure the decoded outputs match the length of the input audio
+            if isinstance(enhanced_audio, list):
+                # For multi-speaker audio
+                for spk in range(self.args.num_spks):
+                    enhanced_audio[spk] = enhanced_audio[spk][:self.data['audio_len']]
+                    noise_audio[spk] = noise_audio[spk][:self.data['audio_len']]
+            else:
+                # Single output
+                enhanced_audio = enhanced_audio[:self.data['audio_len']]
+                noise_audio = noise_audio[:self.data['audio_len']]
+            return enhanced_audio, noise_audio
+        else:
+            # Original functionality for non-noise extraction
+            output_audio = output
+            if isinstance(output_audio, list):
+                for spk in range(self.args.num_spks):
+                    output_audio[spk] = output_audio[spk][:self.data['audio_len']]
+            else:
+                output_audio = output_audio[:self.data['audio_len']]
+            return output_audio
+
+    def process(self, input_path, online_write=False, output_path=None, extract_noise=False):
+        """Process audio files using the model.
+
+        Args:
+            input_path (str): Path to input audio file or directory
+            online_write (bool): Whether to write output files during processing
+            output_path (str): Path for output files (if online_write is True)
+            extract_noise (bool): Whether to extract noise signal
+
+        Returns:
+            If not online_write:
+                If single file:
+                    enhanced_audio or (enhanced_audio, noise_audio)
+                If multiple files:
+                    dict of enhanced_audio or dict of (enhanced_audio, noise_audio)
+        """
         self.result = {}
         self.args.input_path = input_path
-        data_reader = DataReader(self.args)  # Initialize a data reader to load the audio files
+        data_reader = DataReader(self.args)
 
-
-        # Check if online writing is enabled
         if online_write:
-            output_wave_dir = self.args.output_dir  # Set the default output directory
-            if isinstance(output_path, str):  # If a specific output path is provided, use it
+            output_wave_dir = self.args.output_dir
+            if isinstance(output_path, str):
                 output_wave_dir = os.path.join(output_path, self.name)
-            # Create the output directory if it does not exist
             if not os.path.isdir(output_wave_dir):
                 os.makedirs(output_wave_dir)
-        
-        num_samples = len(data_reader)  # Get the total number of samples to process
-        print(f'Running {self.name} ...')  # Display the model being used
+
+        num_samples = len(data_reader)
+        print(f'Running {self.name} ...')
 
         if self.args.task == 'target_speaker_extraction':
             from utils.video_process import process_tse
             assert online_write == True
             process_tse(self.args, self.model, self.device, data_reader, output_wave_dir)
         else:
-            # Disable gradient calculation for better efficiency during inference
             with torch.no_grad():
-                for idx in tqdm(range(num_samples)):  # Loop over all audio samples
+                for idx in tqdm(range(num_samples)):
                     self.data = {}
-                    # Read the audio, waveform ID, and audio length from the data reader
                     input_audio, wav_id, input_len, scalar = data_reader[idx]
-                    # Store the input audio and metadata in self.data
                     self.data['audio'] = input_audio
                     self.data['id'] = wav_id
                     self.data['audio_len'] = input_len
-                    
-                    # Perform the audio decoding/processing
-                    output_audio = self.decode()
 
-                    # Perform audio renormalization
-                    if not isinstance(output_audio, list):
-                        output_audio = output_audio * scalar
+                    if extract_noise:
+                        # Get enhanced audio and noise
+                        enhanced_audio, noise_audio = self.decode(extract_noise=True)
                         
-                    if online_write:
-                        # If online writing is enabled, save the output audio to files
-                        if isinstance(output_audio, list):
-                            # In case of multi-speaker output, save each speaker's output separately
-                            for spk in range(self.args.num_spks):
-                                output_file = os.path.join(output_wave_dir, wav_id.replace('.wav', f'_s{spk+1}.wav'))
-                                sf.write(output_file, output_audio[spk], self.args.sampling_rate)
+                        if not isinstance(enhanced_audio, list):
+                            enhanced_audio = enhanced_audio * scalar
+                            noise_audio = noise_audio * scalar
+
+                        if online_write:
+                            if isinstance(enhanced_audio, list):
+                                # Handle multi-speaker case
+                                for spk in range(self.args.num_spks):
+                                    # Save enhanced audio
+                                    output_file = os.path.join(output_wave_dir, 
+                                                             wav_id.replace('.wav', f'_s{spk+1}.wav'))
+                                    sf.write(output_file, enhanced_audio[spk], self.args.sampling_rate)
+                                    
+                                    # Save corresponding noise
+                                    noise_file = os.path.join(output_wave_dir, 
+                                                            wav_id.replace('.wav', f'_s{spk+1}_noise.wav'))
+                                    sf.write(noise_file, noise_audio[spk], self.args.sampling_rate)
+                            else:
+                                # Save enhanced audio
+                                output_file = os.path.join(output_wave_dir, wav_id)
+                                sf.write(output_file, enhanced_audio, self.args.sampling_rate)
+                                
+                                # Save noise
+                                noise_file = os.path.join(output_wave_dir, 
+                                                        wav_id.replace('.wav', '_noise.wav'))
+                                sf.write(noise_file, noise_audio, self.args.sampling_rate)
                         else:
-                            # Single-speaker or standard output
-                            output_file = os.path.join(output_wave_dir, wav_id)
-                            sf.write(output_file, output_audio, self.args.sampling_rate)
+                            self.result[wav_id] = (enhanced_audio, noise_audio)
                     else:
-                        # If not writing to disk, store the output in the result dictionary
-                        self.result[wav_id] = output_audio
-            
-            # Return the processed results if not writing to disk
-            if not online_write:
-                if len(self.result) == 1:
-                    # If there is only one result, return it directly
-                    return next(iter(self.result.values()))
-                else:
-                    # Otherwise, return the entire result dictionary
-                    return self.result
-    
+                        # Original processing logic
+                        output_audio = self.decode()
+                        
+                        if not isinstance(output_audio, list):
+                            output_audio = output_audio * scalar
+                            
+                        if online_write:
+                            if isinstance(output_audio, list):
+                                for spk in range(self.args.num_spks):
+                                    output_file = os.path.join(output_wave_dir, 
+                                                             wav_id.replace('.wav', f'_s{spk+1}.wav'))
+                                    sf.write(output_file, output_audio[spk], self.args.sampling_rate)
+                            else:
+                                output_file = os.path.join(output_wave_dir, wav_id)
+                                sf.write(output_file, output_audio, self.args.sampling_rate)
+                        else:
+                            self.result[wav_id] = output_audio
+
+        if not online_write:
+            if len(self.result) == 1:
+                return next(iter(self.result.values()))
+            else:
+                return self.result
 
     def write(self, output_path, add_subdir=False, use_key=False):
-        """
-        Write the processed audio results to the specified output path.
+        """Write the processed audio results to the specified output path.
 
         Args:
-            output_path (str): The directory or file path where processed audio will be saved. If not 
-                               provided, defaults to self.args.output_dir.
-            add_subdir (bool): If True, appends the model name as a subdirectory to the output path.
-            use_key (bool): If True, uses the result dictionary's keys (audio file IDs) for filenames.
-
-        Returns:
-            None: Outputs are written to disk, no data is returned.
+            output_path (str): The directory or file path where processed audio will be saved.
+            add_subdir (bool): If True, appends the model name as a subdirectory.
+            use_key (bool): If True, uses the result dictionary's keys for filenames.
         """
-
-        # Ensure the output path is a string. If not provided, use the default output directory
         if not isinstance(output_path, str):
             output_path = self.args.output_dir
 
-        # If add_subdir is enabled, create a subdirectory for the model name
         if add_subdir:
             if os.path.isfile(output_path):
                 print(f'File exists: {output_path}, remove it and try again!')
@@ -285,35 +312,67 @@ class SpeechModel:
             if not os.path.isdir(output_path):
                 os.makedirs(output_path)
 
-        # Ensure proper directory setup when using keys for filenames
         if use_key and not os.path.isdir(output_path):
             if os.path.exists(output_path):
                 print(f'File exists: {output_path}, remove it and try again!')
                 return
             os.makedirs(output_path)
-        # If not using keys and output path is a directory, check for conflicts
+
         if not use_key and os.path.isdir(output_path):
             print(f'Directory exists: {output_path}, remove it and try again!')
             return
 
-        # Iterate over the results dictionary to write the processed audio to disk
         for key in self.result:
+            result_value = self.result[key]
+            is_tuple = isinstance(result_value, tuple)
+            
             if use_key:
-                # If using keys, format filenames based on the result dictionary's keys (audio IDs)
-                if isinstance(self.result[key], list):  # For multi-speaker outputs
+                if isinstance(result_value[0] if is_tuple else result_value, list):
                     for spk in range(self.args.num_spks):
-                        sf.write(os.path.join(output_path, key.replace('.wav', f'_s{spk+1}.wav')),
-                                 self.result[key][spk], self.args.sampling_rate)
+                        # Save enhanced audio
+                        enhanced_path = os.path.join(output_path, key.replace('.wav', f'_s{spk+1}.wav'))
+                        sf.write(enhanced_path, 
+                                result_value[0][spk] if is_tuple else result_value[spk], 
+                                self.args.sampling_rate)
+                        
+                        # Save noise if available
+                        if is_tuple:
+                            noise_path = os.path.join(output_path, key.replace('.wav', f'_s{spk+1}_noise.wav'))
+                            sf.write(noise_path, result_value[1][spk], self.args.sampling_rate)
                 else:
-                    sf.write(os.path.join(output_path, key), self.result[key], self.args.sampling_rate)
+                    # Save enhanced audio
+                    enhanced_path = os.path.join(output_path, key)
+                    sf.write(enhanced_path, 
+                            result_value[0] if is_tuple else result_value, 
+                            self.args.sampling_rate)
+                    
+                    # Save noise if available
+                    if is_tuple:
+                        noise_path = os.path.join(output_path, key.replace('.wav', '_noise.wav'))
+                        sf.write(noise_path, result_value[1], self.args.sampling_rate)
             else:
-                # If not using keys, write audio to the specified output path directly
-                if isinstance(self.result[key], list):  # For multi-speaker outputs
+                if isinstance(result_value[0] if is_tuple else result_value, list):
                     for spk in range(self.args.num_spks):
-                        sf.write(output_path.replace('.wav', f'_s{spk+1}.wav'),
-                                 self.result[key][spk], self.args.sampling_rate)
+                        # Save enhanced audio
+                        enhanced_path = output_path.replace('.wav', f'_s{spk+1}.wav')
+                        sf.write(enhanced_path, 
+                                result_value[0][spk] if is_tuple else result_value[spk], 
+                                self.args.sampling_rate)
+                        
+                        # Save noise if available
+                        if is_tuple:
+                            noise_path = output_path.replace('.wav', f'_s{spk+1}_noise.wav')
+                            sf.write(noise_path, result_value[1][spk], self.args.sampling_rate)
                 else:
-                    sf.write(output_path, self.result[key], self.args.sampling_rate)
+                    # Save enhanced audio
+                    sf.write(output_path, 
+                            result_value[0] if is_tuple else result_value, 
+                            self.args.sampling_rate)
+                    
+                    # Save noise if available
+                    if is_tuple:
+                        noise_path = output_path.replace('.wav', '_noise.wav')
+                        sf.write(noise_path, result_value[1], self.args.sampling_rate)
 
 # The model classes for specific sub-tasks
 
