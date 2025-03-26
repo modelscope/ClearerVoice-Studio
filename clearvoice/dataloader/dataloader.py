@@ -239,7 +239,7 @@ class DataReader(object):
         length (int): The length of the original audio data.
         """
         # Extract the utterance ID from the file path (usually the filename).
-        utt_id = path.split('/')[-1]
+        utt_id = os.path.basename(path)
         use_norm = False
         
         #We suggest to use norm for 'FRCRN_SE_16K' and 'MossFormer2_SS_16K' models
