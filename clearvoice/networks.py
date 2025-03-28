@@ -14,6 +14,7 @@
 
 import torch
 import torch.nn as nn
+import torch.backends.mps as mps
 import soundfile as sf
 import os
 import subprocess
@@ -50,8 +51,12 @@ class SpeechModel:
         Args:
         - args: Argument parser object containing settings like whether to use CUDA (GPU) or not.
         """
+        # Check if mps is available
+        if mps.is_available():
+            args.use_cuda = 1
+            self.device = torch.device('mps')
         # Check if a GPU is available
-        if torch.cuda.is_available():
+        elif torch.cuda.is_available():
             # Find the GPU with the most free memory using a custom method
             free_gpu_id = self.get_free_gpu()
             if free_gpu_id is not None:
