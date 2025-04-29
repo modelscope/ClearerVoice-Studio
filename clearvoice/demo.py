@@ -114,3 +114,17 @@ if False:
 
     #2nd calling method: process video files listed in .scp file, and write outputs to 'path_to_output_videos_tse_scp/'
     myClearVoice(input_path='samples/scp/video_samples.scp', online_write=True, output_path='samples/path_to_output_videos_tse_scp')
+
+##-----Demo Six: use FRCRN_SE_16K model for real-time processing -----------------
+if False:
+    myClearVoice = ClearVoice(task='speech_enhancement', model_names=['FRCRN_SE_16K'])
+
+    ##1st calling method: process an input waveform in real-time and return output waveform, then write to output_FRCRN_SE_16K_realtime.wav
+    output_wav = myClearVoice(input_path='samples/input_realtime.wav', online_write=False)
+    myClearVoice.write(output_wav, output_path='samples/output_FRCRN_SE_16K_realtime.wav')
+
+    ##2nd calling method: process all wav files in 'path_to_input_wavs_realtime/' in real-time and write outputs to 'path_to_output_wavs_realtime'
+    myClearVoice(input_path='samples/path_to_input_wavs_realtime', online_write=True, output_path='samples/path_to_output_wavs_realtime')
+
+    ##3rd calling method: process wav files listed in .scp file in real-time, and write outputs to 'path_to_output_wavs_realtime_scp/'
+    myClearVoice(input_path='samples/scp/audio_samples_realtime.scp', online_write=True, output_path='samples/path_to_output_wavs_realtime_scp')
