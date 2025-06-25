@@ -244,7 +244,13 @@ def decode_one_audio_mossformergan_se_16k(model, device, inputs, args):
                 outputs[current_idx + give_up_length:current_idx + window - give_up_length] = tmp_output[give_up_length:-give_up_length]
 
             current_idx += stride  # Move to the next segment
-
+        # Handle the remaining part of the input if it doesn't fit into a full segment
+        # current_idx > t - window
+        if current_idx < t:
+            last_start = current_idx - give_up_length # shift left by give_up_length
+            tmp_input = inputs[:, last_start:]
+            tmp_output = _decode_one_audio_mossformergan_se_16k(model, device, tmp_input, norm_factor, args)
+            outputs[current_idx:] = tmp_output[give_up_length:]  # Fill the remaining part of the output
         return outputs  # Return the accumulated outputs from segments
     else:
         # If no segmentation is required, process the entire input
