@@ -17,7 +17,6 @@ import torch.nn as nn
 import torch.backends.mps as mps
 import soundfile as sf
 import os
-import subprocess
 import librosa
 from tqdm import tqdm
 import numpy as np
@@ -82,25 +81,25 @@ class SpeechModel:
 
     def get_free_gpu(self):
         """
-        Identifies the GPU with the most free memory using 'nvidia-smi' and returns its index.
+        Identifies the GPU with the most free memory using 'torch.cuda.mem_get_info()' and returns its index.
 
-        This function queries the available GPUs on the system and determines which one has 
-        the highest amount of free memory. It uses the `nvidia-smi` command-line tool to gather 
-        GPU memory usage data. If successful, it returns the index of the GPU with the most free memory.
+        This function queries the available GPUs on the system and for cuda api and determines which one has
+        the highest amount of free memory. If successful, it returns the index of the GPU with the most free memory.
         If the query fails or an error occurs, it returns None.
 
         Returns:
         int: Index of the GPU with the most free memory, or None if no GPU is found or an error occurs.
         """
         try:
-            # Run nvidia-smi to query GPU memory usage and free memory
-            result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.free', '--format=csv,nounits,noheader'], stdout=subprocess.PIPE)
-            gpu_info = result.stdout.decode('utf-8').strip().split('\n')
+            num_gpus = torch.cuda.device_count()
+            if num_gpus == 0:
+                print("No GPUs available")
+                return None
 
             free_gpu = None
             max_free_memory = 0
-            for i, info in enumerate(gpu_info):
-                used, free = map(int, info.split(','))
+            for i in range(num_gpus):
+                free, total = torch.cuda.mem_get_info(i)
                 if free > max_free_memory:
                     max_free_memory = free
                     free_gpu = i
