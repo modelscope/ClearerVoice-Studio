@@ -63,7 +63,7 @@ class SpeechModel:
             if free_gpu_id is not None:
                 args.use_cuda = 1
                 torch.cuda.set_device(free_gpu_id)
-                self.device = torch.device('cuda')
+                self.device = torch.device(f'cuda:{free_gpu_id}')
             else:
                 # If no GPU is detected, use the CPU
                 #print("No GPU found. Using CPU.")
