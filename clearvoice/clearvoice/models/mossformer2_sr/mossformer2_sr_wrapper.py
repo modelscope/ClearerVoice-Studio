@@ -48,5 +48,4 @@ class MossFormer2_SR_48K(nn.Module):
 
         """
         x = self.model_m(x)  # Get outputs and mask from TestNet
-        outpus = self.model_g(x)
-        return outputs  # Return the outputs
+        return self.model_g(x)
