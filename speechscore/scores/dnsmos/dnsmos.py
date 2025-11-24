@@ -11,14 +11,15 @@ INPUT_LENGTH = 9.01
 
 from basis import ScoreBasis
 
+module_dir = os.path.dirname(os.path.abspath(__file__))
 
 class DNSMOS(ScoreBasis):
     def __init__(self):
         super(DNSMOS, self).__init__(name='DNSMOS')
         self.intrusive = True
         self.score_rate = 16000
-        self.p808_model_path = os.path.join('scores/dnsmos/DNSMOS', 'model_v8.onnx')    
-        self.primary_model_path = os.path.join('scores/dnsmos/DNSMOS', 'sig_bak_ovr.onnx')
+        self.p808_model_path = os.path.join(module_dir, 'DNSMOS', 'model_v8.onnx')
+        self.primary_model_path = os.path.join(module_dir, 'DNSMOS', 'sig_bak_ovr.onnx')
         self.compute_score = ComputeScore(self.primary_model_path, self.p808_model_path)
 
     def windowed_scoring(self, audios, rate):
@@ -26,8 +27,9 @@ class DNSMOS(ScoreBasis):
 
 class ComputeScore:
     def __init__(self, primary_model_path, p808_model_path) -> None:
-        self.onnx_sess = ort.InferenceSession(primary_model_path)
-        self.p808_onnx_sess = ort.InferenceSession(p808_model_path)
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        self.onnx_sess = ort.InferenceSession(primary_model_path, providers=providers)
+        self.p808_onnx_sess = ort.InferenceSession(p808_model_path, providers=providers)
         
     def audio_melspec(self, audio, n_mels=120, frame_size=320, hop_length=160, sr=16000, to_db=True):
         mel_spec = librosa.feature.melspectrogram(y=audio, sr=sr, n_fft=frame_size+1, hop_length=hop_length, n_mels=n_mels)
