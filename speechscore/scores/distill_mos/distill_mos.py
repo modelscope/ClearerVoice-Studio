@@ -14,6 +14,7 @@ class DISTILL_MOS(ScoreBasis):
 
     def windowed_scoring(self, audios, score_rate):
     	
-        score = self.model(torch.from_numpy(np.expand_dims(audios[0], axis=0)).float().to(self.device))
+        score = self.model(
+            torch.from_numpy(np.expand_dims(audios[0], axis=0)).float().to(self.device))
         score_np = score.detach().cpu().numpy()
         return score_np[0][0]
