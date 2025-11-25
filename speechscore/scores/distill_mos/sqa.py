@@ -16,7 +16,7 @@ N_LAYERS_TRANSFORMER = 7
 SEQ_LEN = 122880
 MAX_HOP_LEN = 16000
 
-DEFAULT_WEIGHTS_CHKPT = os.path.join("scores/distill_mos/weights", "distill_mos_v7.pt")
+DEFAULT_WEIGHTS_CHKPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "weights", "distill_mos_v7.pt")
 
 
 def _complex_compressed(x, hop_length, win_length):

@@ -33,12 +33,17 @@ class ScoreBasis:
                 audios[index] = audio
 
         if window is not None:
+            maxlen = len(audios[0])
             framer = Framing(window * score_rate, window * score_rate, maxlen)
             nwin = framer.nwin
             result = {}
             for (t, win) in enumerate(framer):
                 result_t = self.windowed_scoring([audio[win] for audio in audios], score_rate)
                 result[t] = result_t
+            if win and maxlen > win.stop:
+                last_win = slice(win.stop, maxlen)
+                result_t = self.windowed_scoring([audio[last_win] for audio in audios], score_rate) 
+                result[nwin] = result_t
         else:
             result = self.windowed_scoring(audios, score_rate)
         return result
