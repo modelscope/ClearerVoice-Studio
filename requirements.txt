@@ -7,6 +7,7 @@ torchaudio>=2.0.2
 yamlargparse==1.31.1
 torchinfo==1.8.0
 tqdm==4.67.0
+soxr==0.5.0.post1
 pyyaml
 pysptk
 pymcd
