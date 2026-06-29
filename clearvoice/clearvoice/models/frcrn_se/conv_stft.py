@@ -76,7 +76,7 @@ class ConvSTFT(nn.Module):
         super(ConvSTFT, self).__init__()
 
         if fft_len is None:
-            self.fft_len = np.int(2**np.ceil(np.log2(win_len)))  # Calculate fft_len based on win_len
+            self.fft_len = 1 << (win_len - 1).bit_length()  # Calculate fft_len based on win_len
         else:
             self.fft_len = fft_len
         
@@ -149,7 +149,7 @@ class ConviSTFT(nn.Module):
         super(ConviSTFT, self).__init__()
 
         if fft_len is None:
-            self.fft_len = np.int(2**np.ceil(np.log2(win_len)))  # Calculate fft_len based on win_len
+            self.fft_len = 1 << (win_len - 1).bit_length()  # Calculate fft_len based on win_len
         else:
             self.fft_len = fft_len
 
@@ -193,10 +193,10 @@ class ConviSTFT(nn.Module):
 
 def test_fft():
     """
-    Test the ConvSTFT layer against Librosa's STFT implementation.
+    Test the ConvSTFT layer against a NumPy STFT reference.
 
     This function generates a random input signal and computes its STFT using the ConvSTFT layer,
-    then compares the output with the STFT computed using Librosa to ensure correctness.
+    then compares the output with a reference implementation that uses the same win_len-based framing.
     """
     torch.manual_seed(20)
     win_len = 320
@@ -208,8 +208,10 @@ def test_fft():
     outputs1 = fft(inputs)[0]  # Compute STFT using ConvSTFT
     outputs1 = outputs1.numpy()[0]  # Convert to NumPy array for comparison
     np_inputs = inputs.numpy().reshape([-1])  # Reshape input for Librosa
-    librosa_stft = librosa.stft(np_inputs, win_length=win_len, n_fft=fft_len, hop_length=win_inc, center=False)  # Compute STFT using Librosa
-    print(np.mean((outputs1 - np.abs(librosa_stft))**2))  # Print mean squared error between the two STFT outputs
+    window = get_window('hann', win_len, fftbins=True)**0.5
+    frames = np.lib.stride_tricks.sliding_window_view(np_inputs, win_len)[::win_inc]
+    reference_stft = np.fft.rfft(frames * window[None, :], n=fft_len, axis=1).T
+    print(np.mean((outputs1 - np.abs(reference_stft))**2))  # Print mean squared error between the two STFT outputs
 
 
 def test_ifft1():
