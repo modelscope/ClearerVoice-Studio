@@ -149,7 +149,7 @@ class ConviSTFT(nn.Module):
         super(ConviSTFT, self).__init__()
 
         if fft_len is None:
-            self.fft_len = int(2**np.ceil(np.log2(win_len)))  # Calculate fft_len based on win_len
+            self.fft_len = 1 << (win_len - 1).bit_length()  # Calculate fft_len based on win_len
         else:
             self.fft_len = fft_len
 
