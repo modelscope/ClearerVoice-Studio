@@ -209,7 +209,7 @@ def test_fft():
     outputs1 = outputs1.numpy()[0]  # Convert to NumPy array for comparison
     np_inputs = inputs.numpy().reshape([-1])  # Reshape input for Librosa
     window = get_window('hann', win_len, fftbins=True)**0.5
-    frames = np.stack([np_inputs[start:start + win_len] for start in range(0, len(np_inputs) - win_len + 1, win_inc)])
+    frames = np.lib.stride_tricks.sliding_window_view(np_inputs, win_len)[::win_inc]
     reference_stft = np.fft.rfft(frames * window[None, :], n=fft_len, axis=1).T
     print(np.mean((outputs1 - np.abs(reference_stft))**2))  # Print mean squared error between the two STFT outputs
 
