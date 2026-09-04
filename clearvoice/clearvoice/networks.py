@@ -414,7 +414,7 @@ class SpeechModel:
                 
         # check if the output dir exists, if not then create it
         directory_path = os.path.dirname(output_path)
-        if not os.path.isdir(directory_path):
+        if directory_path and not os.path.isdir(directory_path):
             os.makedirs(directory_path)
             
         # Ensure proper directory setup when using keys for filenames
