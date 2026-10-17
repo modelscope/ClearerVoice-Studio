@@ -3,7 +3,8 @@ from clearvoice import ClearVoice
 import os
 import time
 import numpy as np
-from silero_vad import load_silero_vad, read_audio, get_speech_timestamps, collect_chunks
+import torch
+from silero_vad import load_silero_vad, get_speech_timestamps, collect_chunks
 import soundfile as sf
 
 st.set_page_config(page_title="ClearerVoice Studio", layout="wide")
@@ -58,8 +59,12 @@ def main():
                         if orig_audio.ndim > 1:
                             orig_audio = orig_audio.mean(axis=1)
                             
-                        # Use Silero VAD (always works at 16kHz)
-                        vad_wav = read_audio(input_path)
+                        # Use Silero VAD (always works at 16kHz). Resample here rather than
+                        # calling silero's read_audio(), which loads through torchaudio and
+                        # fails on torchaudio >= 2.9 unless torchcodec is installed.
+                        import librosa
+                        vad_wav = torch.from_numpy(librosa.resample(
+                            orig_audio.astype(np.float32), orig_sr=orig_sr, target_sr=16000))
                         timestamps = get_speech_timestamps(vad_wav, vad_model, sampling_rate=16000)
                         
                         # Map timestamps to original sample rate
