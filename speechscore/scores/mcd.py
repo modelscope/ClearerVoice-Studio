@@ -101,32 +101,34 @@ class Calculate_MCD(object):
             else:
                 loaded_syn_wav = np.pad(loaded_syn_wav, (0, len(loaded_ref_wav)-len(loaded_syn_wav)))
 
-            # extract MCEP features (vectors): 2D matrix (num x mcep_size)
-            ref_mcep_vec = self.wav2mcep_numpy(loaded_ref_wav, score_rate)
-            syn_mcep_vec = self.wav2mcep_numpy(loaded_syn_wav, score_rate)
+        # extract MCEP features (vectors): 2D matrix (num x mcep_size)
+        ref_mcep_vec = self.wav2mcep_numpy(loaded_ref_wav, score_rate)
+        syn_mcep_vec = self.wav2mcep_numpy(loaded_syn_wav, score_rate)
 
-            if MCD_mode == "plain":
-                # print("Calculate plain MCD ...")
-                path = []
-                # for i in range(num_temp):
-                for i in range(len(ref_mcep_vec)):
-                    path.append((i, i))
-            elif MCD_mode == "dtw":
-                # print("Calculate MCD-dtw ...")
-                _, path = fastdtw(ref_mcep_vec[:, 1:], syn_mcep_vec[:, 1:], dist=euclidean)
-            elif MCD_mode == "dtw_sl":
-                # print("Calculate MCD-dtw-sl ...")
-                cof = len(ref_mcep_vec)/len(syn_mcep_vec) if len(ref_mcep_vec)>len(syn_mcep_vec) else len(syn_mcep_vec)/len(ref_mcep_vec)
-                _, path = fastdtw(ref_mcep_vec[:, 1:], syn_mcep_vec[:, 1:], dist=euclidean)
+        if MCD_mode == "plain":
+            # print("Calculate plain MCD ...")
+            path = []
+            # for i in range(num_temp):
+            for i in range(len(ref_mcep_vec)):
+                path.append((i, i))
+        elif MCD_mode == "dtw":
+            # print("Calculate MCD-dtw ...")
+            _, path = fastdtw(ref_mcep_vec[:, 1:], syn_mcep_vec[:, 1:], dist=euclidean)
+        elif MCD_mode == "dtw_sl":
+            # print("Calculate MCD-dtw-sl ...")
+            cof = len(ref_mcep_vec)/len(syn_mcep_vec) if len(ref_mcep_vec)>len(syn_mcep_vec) else len(syn_mcep_vec)/len(ref_mcep_vec)
+            _, path = fastdtw(ref_mcep_vec[:, 1:], syn_mcep_vec[:, 1:], dist=euclidean)
+        else:
+            raise ValueError(f"Unsupported MCD_mode: {MCD_mode}")
 
-            frames_tot, min_cost_tot = self.calculate_mcd_distance(ref_mcep_vec, syn_mcep_vec, path)
+        frames_tot, min_cost_tot = self.calculate_mcd_distance(ref_mcep_vec, syn_mcep_vec, path)
 
-            if MCD_mode == "dtw_sl":
-                mean_mcd = cof * self.log_spec_dB_const * min_cost_tot / frames_tot
-            else:
-                mean_mcd = self.log_spec_dB_const * min_cost_tot / frames_tot
+        if MCD_mode == "dtw_sl":
+            mean_mcd = cof * self.log_spec_dB_const * min_cost_tot / frames_tot
+        else:
+            mean_mcd = self.log_spec_dB_const * min_cost_tot / frames_tot
 
-            return mean_mcd
+        return mean_mcd
 
     # calculate mcd
     def calculate_mcd(self, reference_audio, synthesized_audio, score_rate):
