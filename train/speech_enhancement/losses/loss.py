@@ -46,7 +46,7 @@ def loss_mossformergan_se_16k(args, inputs, labels, out_list, c, discriminator, 
     loss_mag = F.mse_loss(pred_mag, labels_mag)
     loss_ri = F.mse_loss(pred_real, labels_real) + F.mse_loss(pred_imag, labels_imag)
 
-    pred_spec_uncompress = power_uncompress(labels_real, pred_imag).squeeze(1)
+    pred_spec_uncompress = power_uncompress(pred_real, pred_imag).squeeze(1)
     pred_audio = istft(pred_spec_uncompress, args)
 
     length = min(pred_audio.size(-1), labels.size(-1))
