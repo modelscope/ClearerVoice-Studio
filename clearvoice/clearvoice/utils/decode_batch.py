@@ -334,7 +334,7 @@ def decode_one_audio_mossformer2_se_48k(model, device, inputs, args):
         numpy.ndarray: The decoded audio output, normalized to the range [-1, 1].
     """
     #inputs = inputs[0, :]  # Extract the first element from the input tensor
-    input_len = inputs.shape[0]  # Get the length of the input audio
+    input_len = inputs.shape[-1]  # Get the length of the input audio
     inputs = inputs * MAX_WAV_VALUE  # Normalize the input to the maximum WAV value
 
     # Check if input length exceeds the defined threshold for online decoding
@@ -394,12 +394,12 @@ def decode_one_audio_mossformer2_se_48k(model, device, inputs, args):
                     	batch_fbanks = torch.cat([batch_fbanks, fbanks], dim=0)
                 # Pass filter banks through the model
                 Out_List = model(batch_fbanks)
-                pred_mask = Out_List[-1]  # Get the predicted mask from the output
+                pred_mask_b = Out_List[-1]  # Get the predicted mask from the output
 
                 for batch_idx in range(b):
                     # Apply STFT to the audio segment
                     spectrum = stft(audio_segment[batch_idx,:], args)
-                    pred_mask = pred_mask[batch_idx:batch_idx+1, :, :].permute(2, 1, 0)  # Permute dimensions for masking
+                    pred_mask = pred_mask_b[batch_idx:batch_idx+1, :, :].permute(2, 1, 0)  # Permute dimensions for masking
                     masked_spec = spectrum.cpu() * pred_mask.detach().cpu()  # Apply mask to the spectrum
                     masked_spec_complex = masked_spec[:, :, 0] + 1j * masked_spec[:, :, 1]  # Convert to complex form
 
@@ -408,12 +408,12 @@ def decode_one_audio_mossformer2_se_48k(model, device, inputs, args):
 
                     # Store the output segment in the output tensor
                     if current_idx == 0:
-                        outputs[batch_idx, batch_idx, current_idx:current_idx + window - give_up_length] = output_segment[:-give_up_length]
+                        outputs[batch_idx, current_idx:current_idx + window - give_up_length] = output_segment[:-give_up_length]
                     else:
                         output_segment = output_segment[-window:]  # Get the latest window of output
-                        outputs[batch_idx, batch_idx, current_idx + give_up_length:current_idx + window - give_up_length] = output_segment[give_up_length:-give_up_length]
-                
-                    current_idx += stride  # Move to the next segment
+                        outputs[batch_idx, current_idx + give_up_length:current_idx + window - give_up_length] = output_segment[give_up_length:-give_up_length]
+
+                current_idx += stride  # Move to the next segment
 
     else:
         # Process the entire audio at once if it is shorter than the threshold
@@ -476,6 +476,7 @@ def decode_one_audio_mossformer2_se_48k(model, device, inputs, args):
         masked_spec_complex = masked_spec[:,:,0] + 1j*masked_spec[:,:,1]
         outputs = istft(masked_spec_complex, args, len(audio))   
         """  
+    outputs = outputs[:, :input_len]
     return outputs.numpy() / MAX_WAV_VALUE  # Return the output normalized to [-1, 1]
 
 def get_mel(x, args):
